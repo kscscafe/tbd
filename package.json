@@ -1,0 +1,25 @@
+{
+  "name": "tbd",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Auto-organize fragments into a tree of AI agents that finish your work.",
+  "scripts": {
+    "dev": "node dev.js",
+    "dev:vercel": "vercel dev",
+    "deploy": "vercel deploy --prod",
+    "db:migrate": "node db/migrate.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@neondatabase/serverless": "^0.10.0",
+    "bcryptjs": "^3.0.3",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "vercel": "^39.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
