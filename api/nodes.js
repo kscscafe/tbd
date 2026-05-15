@@ -8,7 +8,8 @@ const ALLOWED_STATUS = new Set(['active', 'waiting', 'blocked', 'dormant', 'done
 const SELECT_COLS = `
   id, user_id, parent_id, name, system_prompt,
   status, progress, priority, next_action,
-  auto_named, sort_order, created_at, updated_at
+  auto_named, sort_order, position_x, position_y,
+  created_at, updated_at
 `;
 
 function clean(s, max) {
@@ -56,8 +57,20 @@ export default async function handler(req, res) {
         WHERE user_id = ${userId} AND node_id IS NOT NULL
         GROUP BY node_id
       `;
-      const countMap = new Map(counts.map((r) => [r.node_id, r.n]));
-      const enriched = nodes.map((n) => ({ ...n, fragment_count: countMap.get(n.id) || 0 }));
+      const issueCounts = await sql`
+        SELECT node_id, COUNT(*)::int AS n
+        FROM issues
+        WHERE user_id = ${userId} AND node_id IS NOT NULL
+          AND status IN ('open', 'in_progress')
+        GROUP BY node_id
+      `;
+      const fragMap = new Map(counts.map((r) => [r.node_id, r.n]));
+      const issueMap = new Map(issueCounts.map((r) => [r.node_id, r.n]));
+      const enriched = nodes.map((n) => ({
+        ...n,
+        fragment_count: fragMap.get(n.id) || 0,
+        open_issue_count: issueMap.get(n.id) || 0,
+      }));
       return res.status(200).json({ nodes: enriched });
     }
 
@@ -117,6 +130,17 @@ export default async function handler(req, res) {
       }
       if (typeof body?.sort_order === 'number' && Number.isFinite(body.sort_order)) {
         fields.sort_order = Math.floor(body.sort_order);
+      }
+      // 星座キャンバスの位置：null も意図的に許可（auto-layout に戻すため）
+      if ('position_x' in (body || {})) {
+        const v = body.position_x;
+        fields.position_x = (v === null) ? null : (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+        if (fields.position_x === undefined) delete fields.position_x;
+      }
+      if ('position_y' in (body || {})) {
+        const v = body.position_y;
+        fields.position_y = (v === null) ? null : (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+        if (fields.position_y === undefined) delete fields.position_y;
       }
 
       // parent_id 変更：cycle ガード（自分の子孫の下に潜らせない）

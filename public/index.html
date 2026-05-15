@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TBD</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/lib/marked.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN",
+                   "Helvetica Neue", "Segoe UI", sans-serif;
+    }
+
+    /* Canvas */
+    .canvas-wrap { position: relative; width: 100%; height: 100%; overflow: hidden; }
+    #canvas { width: 100%; height: 100%; display: block; }
+    .node-circle { transition: stroke-width 0.15s, stroke 0.15s; cursor: pointer; }
+    .node-circle:hover { stroke-width: 4; }
+    .node-circle.drop-target { stroke: #f59e0b; stroke-width: 6; }
+    .node-label {
+      pointer-events: none; user-select: none;
+      font-size: 13px; fill: #1f2937; font-weight: 500;
+    }
+    .node-meta {
+      pointer-events: none; user-select: none;
+      font-size: 10px; fill: #6b7280;
+    }
+    .link-line { stroke: #d1d5db; stroke-width: 1.5; }
+
+    /* Drawer */
+    .drawer {
+      position: fixed; top: 0; right: 0;
+      width: 480px; height: 100vh;
+      background: white;
+      box-shadow: -4px 0 16px rgba(0,0,0,0.1);
+      transform: translateX(100%);
+      transition: transform 0.2s ease-out;
+      display: flex; flex-direction: column;
+      z-index: 30;
+    }
+    .drawer.open { transform: translateX(0); }
+    @media (max-width: 640px) {
+      .drawer { width: 100vw; }
+    }
+
+    /* Markdown */
+    .md p { margin-bottom: 0.5em; }
+    .md p:last-child { margin-bottom: 0; }
+    .md ul, .md ol { margin-left: 1.25rem; list-style: revert; margin-bottom: 0.5em; }
+    .md h1 { font-size: 1.15rem; font-weight: bold; margin: 0.5em 0; }
+    .md h2 { font-size: 1.05rem; font-weight: bold; margin: 0.5em 0; }
+    .md h3 { font-size: 1rem; font-weight: bold; margin: 0.5em 0; }
+    .md code {
+      background: #f3f4f6; padding: 0 4px; border-radius: 3px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em;
+    }
+    .md pre { background: #f3f4f6; padding: 8px; border-radius: 4px; overflow-x: auto; margin-bottom: 0.5em; }
+    .md pre code { background: transparent; padding: 0; }
+    .md blockquote { border-left: 3px solid #d1d5db; padding-left: 8px; color: #6b7280; }
+    .md table { border-collapse: collapse; margin-bottom: 0.5em; }
+    .md th, .md td { border: 1px solid #e5e7eb; padding: 4px 8px; }
+
+    /* Tabs */
+    .d-tab.active { border-color: #2563eb; color: #1f2937; font-weight: bold; }
+  </style>
+</head>
+<body class="bg-stone-50 h-screen flex flex-col overflow-hidden">
+
+  <!-- Header -->
+  <header class="bg-white border-b px-4 py-2 flex items-center justify-between shrink-0">
+    <div class="flex items-center gap-3 min-w-0">
+      <h1 class="font-bold text-lg tracking-wide">TBD</h1>
+      <span class="text-xs text-gray-500 hidden sm:inline">断片を投げる → AIが整理 → エージェントが仕上げる</span>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button id="btn-cluster"
+        class="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700 disabled:bg-gray-300">
+        未分類を整理 <span id="unassigned-count" class="ml-1 bg-white/25 px-1.5 rounded text-xs">0</span>
+      </button>
+      <button id="btn-view" class="border px-3 py-1 rounded text-sm hover:bg-gray-100">表で見る</button>
+      <span id="user-name" class="text-sm text-gray-600 ml-2 hidden md:inline"></span>
+      <button id="btn-logout" class="text-sm text-gray-500 hover:text-gray-900">ログアウト</button>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="flex-1 relative overflow-hidden">
+
+    <!-- Floating action bar for multi-select -->
+    <div id="action-bar"
+      class="hidden absolute top-3 left-1/2 -translate-x-1/2 bg-white shadow-lg rounded-full px-4 py-2 z-40 flex items-center gap-3 text-sm">
+      <span class="text-gray-700">選択中 <span id="action-count" class="font-bold">0</span> 件</span>
+      <button id="btn-group" class="bg-amber-500 text-white px-3 py-1 rounded-full hover:bg-amber-600">
+        グループにする
+      </button>
+      <button id="btn-clear-selection" class="text-gray-500 hover:text-gray-900">解除</button>
+    </div>
+
+    <!-- Constellation canvas -->
+    <div id="canvas-wrap" class="canvas-wrap">
+      <svg id="canvas"></svg>
+      <div id="empty-state"
+        class="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div class="text-center text-gray-400 max-w-md px-6">
+          <p class="text-xl font-semibold mb-2 text-gray-600">あなたの星座は、まだ空っぽ</p>
+          <p class="text-sm leading-relaxed">
+            下の欄に思考の断片を投げて、<br>
+            「未分類を整理」を押してください。<br>
+            AI があなたの頭の中を星に変えます。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table view -->
+    <div id="table-wrap" class="hidden absolute inset-0 overflow-auto p-4 bg-stone-50">
+      <table class="w-full bg-white rounded shadow text-sm">
+        <thead class="bg-gray-100 text-left">
+          <tr>
+            <th class="p-2">名前</th>
+            <th class="p-2">ステータス</th>
+            <th class="p-2">進捗</th>
+            <th class="p-2">優先度</th>
+            <th class="p-2">断片</th>
+            <th class="p-2">次のアクション</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+  </main>
+
+  <!-- Quick input bar (always visible) -->
+  <footer class="bg-white border-t shrink-0">
+    <div class="max-w-3xl mx-auto p-3">
+      <div class="flex gap-2">
+        <textarea id="quick-input" rows="2"
+          placeholder="今、何を考えている？　断片を投げると AI が整理してくれます。 (Cmd/Ctrl+Enter で送信)"
+          class="flex-1 border rounded p-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+        <button id="btn-throw"
+          class="bg-blue-600 text-white px-4 rounded text-sm hover:bg-blue-700 disabled:bg-gray-400">
+          投げる
+        </button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Drawer overlay -->
+  <div id="drawer-overlay" class="fixed inset-0 bg-black/20 hidden z-20"></div>
+
+  <!-- Side drawer (node detail) -->
+  <aside id="drawer" class="drawer">
+    <header class="px-4 py-3 border-b flex items-center justify-between shrink-0">
+      <div class="flex-1 min-w-0">
+        <input id="d-name"
+          class="text-lg font-bold border-b border-transparent hover:border-gray-300 focus:border-blue-500 outline-none w-full" />
+        <div class="text-xs text-gray-500 mt-1">
+          <span id="d-status-text"></span> ・ 進捗 <span id="d-progress-text"></span>%
+        </div>
+      </div>
+      <button id="btn-drawer-close" class="text-gray-400 hover:text-gray-900 ml-2 text-2xl leading-none">×</button>
+    </header>
+
+    <div class="px-4 py-3 border-b shrink-0 bg-gray-50">
+      <div class="grid grid-cols-3 gap-2 text-sm">
+        <div>
+          <label class="block text-xs text-gray-500 mb-0.5">ステータス</label>
+          <select id="d-status" class="border rounded px-2 py-1 w-full text-sm bg-white"></select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-0.5">進捗 %</label>
+          <input id="d-progress" type="number" min="0" max="100" class="border rounded px-2 py-1 w-full text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-0.5">優先度</label>
+          <select id="d-priority" class="border rounded px-2 py-1 w-full text-sm bg-white"></select>
+        </div>
+      </div>
+      <div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-0.5">次のアクション</label>
+        <input id="d-next-action" placeholder="（未設定）" class="border rounded px-2 py-1 w-full text-sm" />
+      </div>
+      <div class="mt-2">
+        <label class="block text-xs text-gray-500 mb-0.5">エージェント人格</label>
+        <textarea id="d-system-prompt" rows="2" class="border rounded px-2 py-1 w-full text-sm"></textarea>
+      </div>
+      <div class="flex gap-2 mt-2 items-center">
+        <button id="btn-save-node" class="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700">保存</button>
+        <button id="btn-detach" class="border px-3 py-1 rounded text-sm hover:bg-gray-100 hidden">親を解除</button>
+        <button id="btn-delete-node" class="text-red-600 text-sm hover:text-red-800 ml-auto">削除</button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="border-b shrink-0">
+      <div class="flex">
+        <button class="d-tab active px-4 py-2 border-b-2 text-sm" data-tab="chat">対話</button>
+        <button class="d-tab px-4 py-2 border-b-2 border-transparent text-gray-500 text-sm" data-tab="fragments">
+          断片<span id="d-frag-count" class="ml-1 text-xs"></span>
+        </button>
+        <button class="d-tab px-4 py-2 border-b-2 border-transparent text-gray-500 text-sm" data-tab="issues">
+          課題<span id="d-issue-count" class="ml-1 text-xs"></span>
+        </button>
+        <button class="d-tab px-4 py-2 border-b-2 border-transparent text-gray-500 text-sm" data-tab="outputs">
+          成果物<span id="d-out-count" class="ml-1 text-xs"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tab contents -->
+    <div class="flex-1 flex flex-col overflow-hidden min-h-0">
+      <!-- Chat -->
+      <div id="d-tab-chat" class="flex-1 flex flex-col overflow-hidden min-h-0">
+        <div id="d-chat-messages" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
+        <div class="border-t p-2 shrink-0">
+          <textarea id="d-chat-input" rows="2"
+            placeholder="このエージェントに質問・指示 (Cmd/Ctrl+Enter)"
+            class="w-full border rounded p-2 text-sm resize-none"></textarea>
+          <div class="flex gap-2 mt-1">
+            <button id="d-btn-send"
+              class="flex-1 bg-blue-600 text-white py-1 rounded text-sm hover:bg-blue-700 disabled:bg-gray-400">送信</button>
+            <button id="d-btn-save-output"
+              class="border px-3 py-1 rounded text-sm hover:bg-gray-100 disabled:opacity-50">直前の応答を成果物に保存</button>
+          </div>
+        </div>
+      </div>
+      <div id="d-tab-fragments" class="flex-1 overflow-y-auto p-3 hidden"></div>
+      <div id="d-tab-issues" class="flex-1 overflow-y-auto p-3 hidden"></div>
+      <div id="d-tab-outputs" class="flex-1 overflow-y-auto p-3 hidden"></div>
+    </div>
+  </aside>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed bottom-28 right-6 bg-gray-900 text-white px-4 py-2 rounded shadow hidden z-50"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

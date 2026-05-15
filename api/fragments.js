@@ -81,6 +81,37 @@ export default async function handler(req, res) {
       return res.status(201).json(rows[0]);
     }
 
+    if (req.method === 'PUT') {
+      const id = req.query?.id;
+      if (!isUuid(id)) return res.status(400).json({ error: 'valid uuid id is required' });
+      const body = await readJson(req);
+      const fields = {};
+      // 手動でノードに割り当て / 未分類に戻す
+      if ('node_id' in (body || {})) {
+        const v = body.node_id;
+        if (v === null) fields.node_id = null;
+        else if (typeof v === 'string' && isUuid(v)) {
+          const n = await sql`SELECT id FROM nodes WHERE id = ${v} AND user_id = ${userId}`;
+          if (!n[0]) return res.status(404).json({ error: 'node not found' });
+          fields.node_id = v;
+        }
+      }
+      const cols = Object.keys(fields);
+      if (cols.length === 0) {
+        return res.status(400).json({ error: 'no fields to update' });
+      }
+      const setClauses = cols.map((c, i) => `${c} = $${i + 1}`).join(', ');
+      const values = cols.map((c) => fields[c]);
+      const rows = await sql.query(
+        `UPDATE fragments SET ${setClauses}
+         WHERE id = $${cols.length + 1} AND user_id = $${cols.length + 2}
+         RETURNING id, user_id, node_id, raw_text, source, source_meta, created_at`,
+        [...values, id, userId]
+      );
+      if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+      return res.status(200).json(rows[0]);
+    }
+
     if (req.method === 'DELETE') {
       const id = req.query?.id;
       if (!isUuid(id)) return res.status(400).json({ error: 'valid uuid id is required' });
@@ -92,7 +123,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, id });
     }
 
-    res.setHeader('Allow', 'GET, POST, DELETE');
+    res.setHeader('Allow', 'GET, POST, PUT, DELETE');
     return res.status(405).json({ error: 'Method Not Allowed' });
   } catch (e) {
     return res.status(500).json({ error: 'DB error', detail: String(e.message || e) });

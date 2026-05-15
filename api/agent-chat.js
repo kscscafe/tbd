@@ -64,6 +64,14 @@ export default async function handler(req, res) {
     ORDER BY created_at DESC
     LIMIT ${MAX_FRAGMENTS_CTX}
   `;
+  const issues = await sql`
+    SELECT title, description, status, priority, due_date
+    FROM issues
+    WHERE user_id = ${userId} AND node_id = ANY(${nodeIds}::uuid[])
+      AND status IN ('open', 'in_progress')
+    ORDER BY priority DESC, created_at DESC
+    LIMIT 30
+  `;
   const outputs = await sql`
     SELECT title, content, type, created_at
     FROM outputs
@@ -74,8 +82,16 @@ export default async function handler(req, res) {
 
   const ctxParts = [
     `あなたは「${node.name}」というテーマを担当するエージェントです。`,
+    '応答ガイドライン：絵文字や過剰なMarkdown装飾を使わず、簡潔な日本語の文章で答えてください。見出しや箇条書きは本当に必要なときだけ使い、表は使わなくて済むなら使いません。',
     node.system_prompt || '',
   ];
+  if (issues.length > 0) {
+    ctxParts.push('', '【未解決の課題（優先度高い順）】');
+    for (const i of issues) {
+      const due = i.due_date ? `（期日 ${i.due_date}）` : '';
+      ctxParts.push(`- [${i.status}] ${i.title}${due}`);
+    }
+  }
   if (fragments.length > 0) {
     ctxParts.push('', '【蓄積された断片（新しい順）】');
     for (const f of fragments) ctxParts.push(`- ${f.raw_text}`);
